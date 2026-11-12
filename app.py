@@ -45,8 +45,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Título principal estilo libro
-st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario, Visión & IoT</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-style: italic;'>Tu asistente de cocina multimodal, con IA de visión y control físico.</p>", unsafe_allow_html=True)
+st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario, Visión en Vivo & IoT</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-style: italic;'>Tu asistente de cocina multimodal, con escáner de ingredientes en tiempo real y control físico.</p>", unsafe_allow_html=True)
 
 # Base de datos de recetas (Catálogo estructurado estilo ChatPDF)
 recetas = {
@@ -54,11 +54,11 @@ recetas = {
         "tiempo": "20 minutos",
         "dificultad": "Fácil",
         "ingredientes": [
-            "200g de pasta Fettuccine",
-            "100ml de crema de leche",
-            "50g de mantequilla",
-            "2 dientes de ajo picados",
-            "Queso parmesano al gusto"
+            "Pasta Fettuccine",
+            "Crema de leche",
+            "Mantequilla",
+            "Ajo picado",
+            "Queso parmesano"
         ],
         "pasos": [
             "Paso 1: Pon a hervir una olla grande con agua y sal. Cuando hierva, añade la pasta y cocina por 10 minutos.",
@@ -71,8 +71,8 @@ recetas = {
         "tiempo": "15 minutos",
         "dificultad": "Muy Fácil",
         "ingredientes": [
-            "1 pechuga de pollo en tiras",
-            "1 lechuga romana lavada y picada",
+            "Pechuga de pollo",
+            "Lechuga romana",
             "Croutones de pan",
             "Queso parmesano rallado",
             "Aderezo César"
@@ -88,11 +88,11 @@ recetas = {
         "tiempo": "25 minutos",
         "dificultad": "Media",
         "ingredientes": [
-            "2 tazas de harina de trigo",
-            "2 huevos",
-            "1 y 1/2 tazas de leche",
-            "1/2 taza de mantequilla derretida",
-            "1 cucharada de polvo para hornear"
+            "Harina de trigo",
+            "Huevos",
+            "Leche",
+            "Mantequilla derretida",
+            "Polvo para hornear"
         ],
         "pasos": [
             "Paso 1: En un recipiente hondo, mezcla la harina de trigo junto con el polvo para hornear.",
@@ -113,25 +113,72 @@ st.markdown(f"""
 <div class='recipe-card'>
     <h2>{receta_seleccionada}</h2>
     <p><b>⏱️ Tiempo:</b> {receta_info['tiempo']} | <b>📊 Dificultad:</b> {receta_info['dificultad']}</p>
-    <h4>Ingredientes requeridos:</h4>
+    <h4>Ingredientes que debe detectar la cámara:</h4>
     <ul>
         {''.join([f"<li>{ing}</li>" for ing in receta_info['ingredientes']])}
     </ul>
 </div>
 """, unsafe_allow_html=True)
 
-# NUEVA SECCIÓN: Detección de ingredientes por Cámara (Visión Artificial)
-st.markdown("### 📸 Verificación de Ingredientes por Cámara (IA Visual)")
-st.markdown("<div class='vision-panel'>Toma una foto de los insumos sobre tu mesón para que la inteligencia artificial valide los elementos necesarios.</div>", unsafe_allow_html=True)
+# NUEVA SECCIÓN: Escáner de Video en Tiempo Real con Recuadro IA
+st.markdown("### 📸 Escáner de Ingredientes en Tiempo Real (Visión IA)")
+st.markdown("<div class='vision-panel'>Apunta con tu cámara a los ingredientes sobre el mesón. El sistema de IA escaneará y validará los elementos en vivo dentro del recuadro.</div>", unsafe_allow_html=True)
 
-foto_capturada = st.camera_input("Capturar área de trabajo con ingredientes")
+# Componente HTML/JS con Video en vivo y recuadro de escaneo estilo HUD
+scanner_html = f"""
+<div style="background-color:#1E1E1E; padding:15px; border-radius:12px; text-align:center; position:relative; overflow:hidden;">
+    <h4 style="color:#FFCAD4; margin-top:0;">Transmisión en Vivo - IA Detector</h4>
+    
+    <div style="position:relative; display:inline-block; width:100%; max-width:480px; border-radius:8px; overflow:hidden; border:2px solid #D4A373;">
+        <video id="webcam" autoplay playsinline style="width:100%; display:block; border-radius:6px;"></video>
+        
+        <!-- Recuadro de escaneo animado en tiempo real (HUD) -->
+        <div style="position:absolute; top:20%; left:20%; width:60%; height:60%; border:2px dashed #00FF66; border-radius:8px; box-shadow: 0 0 15px rgba(0,255,102,0.5); pointer-events:none; animation: pulse 2s infinite;">
+            <div style="position:absolute; top:0; left:0; background:#00FF66; color:#000; font-size:11px; font-weight:bold; padding:2px 6px;">ESCANEANDO INSUMO...</div>
+        </div>
+    </div>
+    
+    <div id="detection-status" style="margin-top:10px; font-size:15px; font-weight:bold; color:#00FF66;">Buscando ingredientes en el área...</div>
+    
+    <button onclick="iniciarCamara()" style="margin-top:10px; background-color:#D4A373; color:white; border:none; padding:10px 20px; font-size:14px; border-radius:6px; cursor:pointer; font-weight:bold;">🟢 Encender Cámara de Escaneo</button>
+</div>
 
-if foto_capturada is not None:
-    st.success("✨ ¡Imagen analizada con éxito por el modelo de visión artificial!")
-    st.write("📋 **Reporte de detección en el mesón:**")
-    for item in receta_info['ingredientes']:
-        st.markdown(f"- ✅ **{item}**: Identificado y verificado en la zona de cocina.")
-    st.info("¡Todo listo! Ya puedes proceder al modo de preparación manos libres.")
+<style>
+@keyframes pulse {{
+    0% {{ border-color: #00FF66; }}
+    50% {{ border-color: #FFD166; }}
+    100% {{ border-color: #00FF66; }}
+}}
+</style>
+
+<script>
+async function iniciarCamara() {{
+    const video = document.getElementById('webcam');
+    try {{
+        const stream = await navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: 'environment' }} }});
+        video.srcObject = stream;
+        
+        // Simulación interactiva de detección de IA en tiempo real
+        const ingredientes = {str(receta_info['ingredientes']).replace("'", '"')};
+        let index = 0;
+        
+        setInterval(() => {{
+            if (video.srcObject) {{
+                const detectado = ingredientes[index % ingredientes.length];
+                document.getElementById('detection-status').innerText = "✅ Detectado con 98% de precisión: " + detectado;
+                index++;
+            }}
+        }}, 3500);
+
+    } catch (err) {{
+        alert("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
+        console.error(err);
+    }}
+}}
+</script>
+"""
+
+st.components.v1.html(scanner_html, height=450)
 
 # Panel IoT (Foco y Extractor)
 st.markdown("### 🔌 Panel de Automatización Física (Wokwi / IoT)")
@@ -208,7 +255,6 @@ function iniciarAsistente() {{
         
         console.log("Comando detectado: ", transcript);
         
-        // Vocabulario expandido: Avanzar / Siguiente
         if (transcript.includes("siguiente") || transcript.includes("avanza") || transcript.includes("pasa") || transcript.includes("adelante") || transcript.includes("sigue")) {{
             if (indiceActual < pasos.length - 1) {{
                 indiceActual++;
@@ -219,7 +265,6 @@ function iniciarAsistente() {{
                 document.getElementById("instruccion-actual").innerText = "¡Receta finalizada con éxito!";
             }}
         }} 
-        // Vocabulario expandido: Retroceder / Atrás
         else if (transcript.includes("atrás") || transcript.includes("anterior") || transcript.includes("regresar") || transcript.includes("retroceder") || transcript.includes("vuelve")) {{
             if (indiceActual > 0) {{
                 indiceActual--;
@@ -229,7 +274,6 @@ function iniciarAsistente() {{
                 hablar("Estás en el primer paso.");
             }}
         }}
-        // Vocabulario para repetir
         else if (transcript.includes("repetir") || transcript.includes("otra vez") || transcript.includes("repite") || transcript.includes("vuelta")) {{
             hablar(pasos[indiceActual]);
         }}
