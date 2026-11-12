@@ -1,6 +1,7 @@
 import streamlit as st
 import cv2
 import av
+import threading
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 from ultralytics import YOLO
 
@@ -11,14 +12,18 @@ st.set_page_config(
     layout="centered"
 )
 
-# Cargar el modelo YOLOv8 ligero (se descarga automáticamente la primera vez)
+# Cargar el modelo YOLOv8 ligero
 @st.cache_resource
 def cargar_modelo_yolo():
     return YOLO("yolov8n.pt")
 
 modelo_yolo = cargar_modelo_yolo()
 
-# Estilos CSS personalizados para dar estética de libro de cocina
+# Estado global seguro para compartir los objetos detectados entre el hilo de video y la interfaz de Streamlit
+if "detectados" not in st.session_state:
+    st.session_state.detectados = set()
+
+# Estilos CSS con estética de libro de cocina rústico
 st.markdown("""
     <style>
     .stApp {
@@ -52,25 +57,26 @@ st.markdown("""
         border-radius: 8px;
         border: 1px solid #FFCAD4;
     }
+    .tachado {
+        text-decoration: line-through;
+        color: #2D6A4F;
+        font-weight: bold;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # Título principal estilo libro
 st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario, Visión YOLO & IoT</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-style: italic;'>Asistente multimodal con detección de objetos YOLOv8 en tiempo real y control físico.</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-style: italic;'>Asistente multimodal con detección interactiva en tiempo real y control físico.</p>", unsafe_allow_html=True)
 
-# Base de datos de recetas (Catálogo estructurado estilo ChatPDF)
+# Base de datos de recetas con sus ingredientes y herramientas/implementos físicos
 recetas = {
     "Pasta Alfredo Casera": {
         "tiempo": "20 minutos",
         "dificultad": "Fácil",
-        "ingredientes": [
-            "200g de pasta Fettuccine",
-            "100ml de crema de leche",
-            "50g de mantequilla",
-            "2 dientes de ajo picados",
-            "Queso parmesano al gusto"
-        ],
+        "ingredientes": ["Pasta Fettuccine", "Crema de leche", "Mantequilla", "Ajo", "Queso parmesano"],
+        "implementos": ["bowl", "knife", "spoon", "fork", "wine glass"], # Mapeado a clases que YOLOv8 detecta fácilmente (tazón, cuchillo, cuchara, tenedor, copa/vaso)
+        "implementos_nombres": ["Tazón hondo (Bowl)", "Cuchillo de cocina", "Cuchara mezcladora", "Tenedor", "Recipiente de crema"],
         "pasos": [
             "Paso 1: Pon a hervir una olla grande con agua y sal. Cuando hierva, añade la pasta y cocina por 10 minutos.",
             "Paso 2: En una sartén grande, derrama la mantequilla a fuego medio y sofríe los dos dientes de ajo picados hasta que doren.",
@@ -81,13 +87,9 @@ recetas = {
     "Ensalada César con Pollo": {
         "tiempo": "15 minutos",
         "dificultad": "Muy Fácil",
-        "ingredientes": [
-            "1 pechuga de pollo en tiras",
-            "1 lechuga romana lavada y picada",
-            "Croutones de pan",
-            "Queso parmesano rallado",
-            "Aderezo César"
-        ],
+        "ingredientes": ["Pechuga de pollo", "Lechuga romana", "Croutones", "Queso parmesano", "Aderezo César"],
+        "implementos": ["bowl", "knife", "fork", "spoon", "bottle"],
+        "implementos_nombres": ["Tazón grande de ensalada", "Cuchillo para picar", "Tenedor", "Cuchara de aderezo", "Botella de aceite/aderezo"],
         "pasos": [
             "Paso 1: Cocina las tiras de pechuga de pollo en una sartén con un chorrito de aceite, sal y pimienta hasta que estén doradas.",
             "Paso 2: En un bol grande, coloca la lechuga romana limpia y picada como base principal.",
@@ -98,13 +100,9 @@ recetas = {
     "Waffles Caseros Esponjosos": {
         "tiempo": "25 minutos",
         "dificultad": "Media",
-        "ingredientes": [
-            "2 tazas de harina de trigo",
-            "2 huevos",
-            "1 y 1/2 tazas de leche",
-            "1/2 taza de mantequilla derretida",
-            "1 cucharada de polvo para hornear"
-        ],
+        "ingredientes": ["Harina de trigo", "Huevos", "Leche", "Mantequilla", "Polvo de hornear"],
+        "implementos": ["bowl", "spoon", "cup", "fork", "bottle"],
+        "implementos_nombres": ["Tazón mezclador", "Cuchara medidora", "Taza para leche", "Tenedor para batir", "Botella de leche/mantequilla"],
         "pasos": [
             "Paso 1: En un recipiente hondo, mezcla la harina de trigo junto con el polvo para hornear.",
             "Paso 2: En otro tazón, bate los huevos, añade la leche y la mantequilla derretida.",
@@ -119,23 +117,38 @@ st.markdown("### 🔍 Índice de Recetas (Catálogo ChatPDF)")
 receta_seleccionada = st.selectbox("Elige una receta del catálogo:", list(recetas.keys()))
 receta_info = recetas[receta_seleccionada]
 
-# Mostrar tarjeta de la receta
+# Limpiar objetos detectados al cambiar de receta
+if "receta_actual" not in st.session_state or st.session_state.receta_actual != receta_seleccionada:
+    st.session_state.receta_actual = receta_seleccionada
+    st.session_state.detectados = set()
+
+# Mostrar tarjeta de la receta con implementos requeridos
 st.markdown(f"""
 <div class='recipe-card'>
     <h2>{receta_seleccionada}</h2>
     <p><b>⏱️ Tiempo:</b> {receta_info['tiempo']} | <b>📊 Dificultad:</b> {receta_info['dificultad']}</p>
-    <h4>Ingredientes necesarios:</h4>
+    <h4>Ingredientes:</h4>
     <ul>
         {''.join([f"<li>{ing}</li>" for ing in receta_info['ingredientes']])}
     </ul>
+    <h4>🛠️ Herramientas / Implementos a detectar por la cámara:</h4>
 </div>
 """, unsafe_allow_html=True)
 
-# SECCIÓN DE VISIÓN ARTIFICIAL EN TIEMPO REAL CON YOLOv8
-st.markdown("### 👁️ Escáner de Cocina en Tiempo Real (YOLOv8)")
-st.markdown("<div class='vision-panel'>Haz clic en <b>START</b> para encender la cámara. El modelo YOLOv8 detectará alimentos y utensilios en vivo (ej. tazas, tazones, frutas, botellas, cuchillos, tenedores).</div>", unsafe_allow_html=True)
+# LISTA INTERACTIVA DINÁMICA (Se tacha en tiempo real conforme YOLO detecta el objeto)
+cols_checklist = st.columns(len(receta_info['implementos']))
+for idx, imp_nombre in enumerate(receta_info['implementos_nombres']):
+    clase_yolo = receta_info['implementos'][idx]
+    with cols_checklist[idx]:
+        if clase_yolo in st.session_state.detectados:
+            st.markdown(f"<p class='tachado'>✅ {imp_nombre}</p>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<p style='color: #888;'>⏳ {imp_nombre}</p>", unsafe_allow_html=True)
 
-# Configuración STUN para asegurar conexión de video en Streamlit Cloud
+# SECCIÓN DE VISIÓN ARTIFICIAL EN TIEMPO REAL CON YOLOv8
+st.markdown("### 👁️ Escáner de Implementos en Vivo (YOLOv8)")
+st.markdown("<div class='vision-panel'>Haz clic en <b>START</b> para encender la cámara. Al mostrar las herramientas frente al lente, el sistema las reconocerá y las tachará automáticamente en la lista de arriba.</div>", unsafe_allow_html=True)
+
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
@@ -144,12 +157,19 @@ class YOLOVideoProcessor(VideoProcessorBase):
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         
-        # Ejecutar inferencia real con YOLOv8 (confianza mínima 40%)
-        resultados = modelo_yolo(img, conf=0.40, verbose=False)
+        # Inferencia con YOLOv8
+        resultados = modelo_yolo(img, conf=0.35, verbose=False)
         
-        # Dibujar automáticamente los recuadros (bounding boxes) y etiquetas detectadas
+        # Extraer nombres de las clases detectadas en este fotograma
+        for box in resultados[0].boxes:
+            cls_id = int(box.cls[0])
+            nombre_clase = modelo_yolo.names[cls_id]
+            
+            # Si el objeto detectado coincide con los implementos de la receta actual, registrarlo
+            if nombre_clase in receta_info['implementos']:
+                st.session_state.detectados.add(nombre_clase)
+
         img_anotada = resultados[0].plot()
-        
         return av.VideoFrame.from_ndarray(img_anotada, format="bgr24")
 
 webrtc_streamer(
