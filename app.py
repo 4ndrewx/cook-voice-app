@@ -170,7 +170,7 @@ async function iniciarCamara() {{
             }}
         }}, 3500);
 
-    } catch (err) {{
+    catch (err) {{
         alert("No se pudo acceder a la cámara. Revisa los permisos del navegador.");
         console.error(err);
     }}
