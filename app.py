@@ -1,7 +1,8 @@
 import streamlit as st
 import cv2
-import numpy as np
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import av
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
+from ultralytics import YOLO
 
 # Configuración de la página con estética de libro de cocina
 st.set_page_config(
@@ -10,7 +11,14 @@ st.set_page_config(
     layout="centered"
 )
 
-# Estilos CSS personalizados para dar estética de libro de cocina rústico/moderno
+# Cargar el modelo YOLOv8 ligero (se descarga automáticamente la primera vez)
+@st.cache_resource
+def cargar_modelo_yolo():
+    return YOLO("yolov8n.pt")
+
+modelo_yolo = cargar_modelo_yolo()
+
+# Estilos CSS personalizados para dar estética de libro de cocina
 st.markdown("""
     <style>
     .stApp {
@@ -49,7 +57,7 @@ st.markdown("""
 
 # Título principal estilo libro
 st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario, Visión YOLO & IoT</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-style: italic;'>Asistente multimodal con detección de objetos YOLO en tiempo real y control físico.</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-style: italic;'>Asistente multimodal con detección de objetos YOLOv8 en tiempo real y control físico.</p>", unsafe_allow_html=True)
 
 # Base de datos de recetas (Catálogo estructurado estilo ChatPDF)
 recetas = {
@@ -57,11 +65,11 @@ recetas = {
         "tiempo": "20 minutos",
         "dificultad": "Fácil",
         "ingredientes": [
-            "Pasta Fettuccine",
-            "Crema de leche",
-            "Mantequilla",
-            "Ajo picado",
-            "Queso parmesano"
+            "200g de pasta Fettuccine",
+            "100ml de crema de leche",
+            "50g de mantequilla",
+            "2 dientes de ajo picados",
+            "Queso parmesano al gusto"
         ],
         "pasos": [
             "Paso 1: Pon a hervir una olla grande con agua y sal. Cuando hierva, añade la pasta y cocina por 10 minutos.",
@@ -74,8 +82,8 @@ recetas = {
         "tiempo": "15 minutos",
         "dificultad": "Muy Fácil",
         "ingredientes": [
-            "Pechuga de pollo",
-            "Lechuga romana",
+            "1 pechuga de pollo en tiras",
+            "1 lechuga romana lavada y picada",
             "Croutones de pan",
             "Queso parmesano rallado",
             "Aderezo César"
@@ -91,11 +99,11 @@ recetas = {
         "tiempo": "25 minutos",
         "dificultad": "Media",
         "ingredientes": [
-            "Harina de trigo",
-            "Huevos",
-            "Leche",
-            "Mantequilla derretida",
-            "Polvo para hornear"
+            "2 tazas de harina de trigo",
+            "2 huevos",
+            "1 y 1/2 tazas de leche",
+            "1/2 taza de mantequilla derretida",
+            "1 cucharada de polvo para hornear"
         ],
         "pasos": [
             "Paso 1: En un recipiente hondo, mezcla la harina de trigo junto con el polvo para hornear.",
@@ -116,48 +124,41 @@ st.markdown(f"""
 <div class='recipe-card'>
     <h2>{receta_seleccionada}</h2>
     <p><b>⏱️ Tiempo:</b> {receta_info['tiempo']} | <b>📊 Dificultad:</b> {receta_info['dificultad']}</p>
-    <h4>Ingredientes objetivo a detectar por YOLO:</h4>
+    <h4>Ingredientes necesarios:</h4>
     <ul>
         {''.join([f"<li>{ing}</li>" for ing in receta_info['ingredientes']])}
     </ul>
 </div>
 """, unsafe_allow_html=True)
 
-# SECCIÓN DE VISIÓN ARTIFICIAL EN TIEMPO REAL CON YOLO
-st.markdown("### 👁️ Detección de Ingredientes en Tiempo Real (Modelo YOLO)")
-st.markdown("<div class='vision-panel'>El sistema procesa cada cuadro de la cámara aplicando un modelo de detección de objetos YOLO para identificar los insumos sobre el mesón con bounding boxes en vivo.</div>", unsafe_allow_html=True)
+# SECCIÓN DE VISIÓN ARTIFICIAL EN TIEMPO REAL CON YOLOv8
+st.markdown("### 👁️ Escáner de Cocina en Tiempo Real (YOLOv8)")
+st.markdown("<div class='vision-panel'>Haz clic en <b>START</b> para encender la cámara. El modelo YOLOv8 detectará alimentos y utensilios en vivo (ej. tazas, tazones, frutas, botellas, cuchillos, tenedores).</div>", unsafe_allow_html=True)
 
-# Clase transformadora para procesar video fotograma a fotograma (Simulando inferencia YOLO en vivo)
-class YOLOProcessor(VideoTransformerBase):
-    def __init__(self):
-        self.frame_count = 0
+# Configuración STUN para asegurar conexión de video en Streamlit Cloud
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
 
-    def transform(self, frame):
+class YOLOVideoProcessor(VideoProcessorBase):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        h, w, _ = img.shape
-        self.frame_count += 1
+        
+        # Ejecutar inferencia real con YOLOv8 (confianza mínima 40%)
+        resultados = modelo_yolo(img, conf=0.40, verbose=False)
+        
+        # Dibujar automáticamente los recuadros (bounding boxes) y etiquetas detectadas
+        img_anotada = resultados[0].plot()
+        
+        return av.VideoFrame.from_ndarray(img_anotada, format="bgr24")
 
-        # Simulación dinámica de la red YOLO (dibujando Bounding Boxes y etiquetas)
-        # Seleccionamos un ingrediente rotativo de la receta actual
-        ingrediente_actual = receta_info['ingredientes'][(self.frame_count // 30) % len(receta_info['ingredientes'])]
-        
-        # Coordenadas del rectángulo de escaneo (Bounding Box estilo YOLO)
-        x1, y1, x2, y2 = int(w * 0.2), int(h * 0.2), int(w * 0.8), int(h * 0.8)
-        
-        # Dibujar Bounding Box verde brillante (YOLO HUD)
-        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        
-        # Etiqueta de confianza del modelo
-        label = f"YOLOv8: {ingrediente_actual} (96.5%)"
-        cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        
-        # Ancla central de escaneo
-        cv2.circle(img, (int(w/2), int(h/2)), 5, (0, 0, 255), -1)
-
-        return img
-
-# Integración del stream de video WebRTC
-webrtc_streamer(key="yolo-detector", video_processor_factory=YOLOProcessor)
+webrtc_streamer(
+    key="yolo-cocina-live",
+    video_processor_factory=YOLOVideoProcessor,
+    rtc_configuration=RTC_CONFIGURATION,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
 
 # Panel IoT (Foco y Extractor)
 st.markdown("### 🔌 Panel de Automatización Física (Wokwi / IoT)")
@@ -231,8 +232,6 @@ function iniciarAsistente() {{
     recognition.onresult = function(event) {{
         const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
         document.getElementById("feedback-voz").innerText = "Escuché: \\"" + transcript + "\\"";
-        
-        console.log("Comando detectado: ", transcript);
         
         if (transcript.includes("siguiente") || transcript.includes("avanza") || transcript.includes("pasa") || transcript.includes("adelante") || transcript.includes("sigue")) {{
             if (indiceActual < pasos.length - 1) {{
