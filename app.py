@@ -42,7 +42,7 @@ st.markdown("""
 st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario & IoT</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-style: italic;'>Tu asistente de cocina manos libres, conectado al entorno físico.</p>", unsafe_allow_html=True)
 
-# Base de datos de recetas (Catálogo estructurado estilo ChatPDF)
+# Base de datos de recetas
 recetas = {
     "Pasta Alfredo Casera": {
         "tiempo": "20 minutos",
@@ -97,10 +97,9 @@ recetas = {
     }
 }
 
-# Selección de receta en la interfaz (Estilo índice del libro)
+# Selección de receta
 st.markdown("### 🔍 Índice de Recetas")
 receta_seleccionada = st.selectbox("Elige una receta del catálogo:", list(recetas.keys()))
-
 receta_info = recetas[receta_seleccionada]
 
 # Mostrar tarjeta de la receta
@@ -115,7 +114,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Sección de Control de Hardware IoT (Foco y Extractor simulados)
+# Panel IoT (Foco y Extractor)
 st.markdown("### 🔌 Panel de Automatización Física (Wokwi / IoT)")
 st.markdown("<div class='iot-panel'>Controla los actuadores de tu cocina automáticamente al iniciar la receta.</div>", unsafe_allow_html=True)
 
@@ -135,26 +134,28 @@ if extractor_estado:
 else:
     st.info("Estado Físico: Extractor en reposo.")
 
-# Sección de Modo Cocina con Asistente de Voz Integrado (JavaScript + Web Speech API)
-st.markdown("### 🎙️ Modo Cocina Manos Libres (Micrófono)")
-st.markdown("Haz clic en el botón de abajo para activar el reconocimiento de voz. Di **'siguiente'** para avanzar de paso o **'repetir'** para escuchar de nuevo.")
+# Sección de Modo Cocina Mejorado con Coincidencia Flexible
+st.markdown("### 🎙️ Modo Cocina Manos Libres (Micrófono Inteligente)")
+st.markdown("Haz clic en **Iniciar**, y di palabras como **'siguiente'**, **'avanza'**, **'pasa'** o **'repetir'** con total naturalidad.")
 
-# Pasos de la receta en formato JSON seguro para JavaScript
 pasos_js = str(receta_info['pasos']).replace("'", '"')
 
-# Componente HTML + JavaScript embebido en Streamlit para el manejo del micrófono y síntesis de voz (Text-to-Speech)
 voz_html = f"""
 <div style="background-color:#FAF0CA; padding:20px; border-radius:10px; text-align:center;">
-    <h3 style="color:#333;">Asistente de Voz Activo</h3>
-    <p id="instruccion-actual" style="font-size:18px; font-weight:bold; color:#D4A373;">Presiona el botón y di "Siguiente"</p>
-    <button onclick="iniciarAsistente()" style="background-color:#D4A373; color:white; border:none; padding:12px 24px; font-size:16px; border-radius:8px; cursor:pointer;">🎤 Iniciar Control por Voz</button>
+    <h3 style="color:#333; margin-top:0;">Asistente de Voz Inteligente</h3>
+    <p id="instruccion-actual" style="font-size:18px; font-weight:bold; color:#D4A373; min-height:50px;">Presiona el botón para comenzar</p>
+    <p id="feedback-voz" style="font-size:13px; color:#666; font-style:italic;">Escuchando: (Inactivo)</p>
+    <button onclick="iniciarAsistente()" style="background-color:#D4A373; color:white; border:none; padding:12px 24px; font-size:16px; border-radius:8px; cursor:pointer; font-weight:bold;">🎤 Activar Reconocimiento</button>
 </div>
 
 <script>
 const pasos = {pasos_js};
 let indiceActual = 0;
+let recognition;
+let isRunning = false;
 
 function hablar(texto) {{
+    window.speechSynthesis.cancel(); // Detener voz anterior si habla encima
     const utterance = new SpeechSynthesisUtterance(texto);
     utterance.lang = 'es-ES';
     window.speechSynthesis.speak(utterance);
@@ -163,40 +164,57 @@ function hablar(texto) {{
 function iniciarAsistente() {{
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {{
-        alert("Tu navegador no soporta reconocimiento de voz. Usa Google Chrome.");
+        alert("Tu navegador no soporta reconocimiento de voz. Usa Google Chrome o Edge.");
         return;
     }}
     
-    const recognition = new SpeechRecognition();
+    if (isRunning) return;
+    
+    recognition = new SpeechRecognition();
     recognition.lang = 'es-ES';
-    recognition.continuous = false;
+    recognition.continuous = true;
+    recognition.interimResults = false;
     
     document.getElementById("instruccion-actual").innerText = pasos[indiceActual];
     hablar(pasos[indiceActual]);
     
+    recognition.onstart = function() {{
+        isRunning = true;
+        document.getElementById("feedback-voz").innerText = "Escuchando activo... Habla ahora.";
+    }};
+    
     recognition.onresult = function(event) {{
-        const comando = event.results[0][0].transcript.toLowerCase();
-        console.log("Comando detectado: ", comando);
+        const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
+        document.getElementById("feedback-voz").innerText = "Escuché: \\"" + transcript + "\\"";
         
-        if (comando.includes("siguiente") || comando.includes("avanzar")) {{
+        console.log("Comando detectado: ", transcript);
+        
+        // Coincidencia flexible por palabras clave (Mucho más fácil de activar)
+        if (transcript.includes("siguiente") || transcript.includes("avanza") || transcript.includes("pasa") || transcript.includes("adelante") || transcript.includes("sigue")) {{
             if (indiceActual < pasos.length - 1) {{
                 indiceActual++;
                 document.getElementById("instruccion-actual").innerText = pasos[indiceActual];
                 hablar(pasos[indiceActual]);
             }} else {{
                 hablar("Has finalizado la receta. ¡Buen provecho!");
-                document.getElementById("instruccion-actual").innerText = "¡Receta finalizada!";
+                document.getElementById("instruccion-actual").innerText = "¡Receta finalizada con éxito!";
             }}
-        }} else if (comando.includes("repetir") || comando.includes("otra vez")) {{
+        }} 
+        else if (transcript.includes("repetir") || transcript.includes("otra vez") || transcript.includes("repite") || transcript.includes("vuelta")) {{
             hablar(pasos[indiceActual]);
         }}
     }};
     
+    recognition.onerror = function(event) {{
+        console.log("Error de reconocimiento: ", event.error);
+    }};
+    
     recognition.onend = function() {{
-        // Reiniciar escucha automáticamente para manos libres continuo
-        try {{
-            recognition.start();
-        }} catch(e) {{}}
+        if (isRunning) {{
+            try {{
+                recognition.start(); // Reinicio automático continuo
+            }} catch(e) {{}}
+        }}
     }};
     
     recognition.start();
@@ -204,4 +222,4 @@ function iniciarAsistente() {{
 </script>
 """
 
-st.components.v1.html(voz_html, height=220)
+st.components.v1.html(voz_html, height=250)
