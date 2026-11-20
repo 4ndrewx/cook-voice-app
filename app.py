@@ -1,5 +1,4 @@
 import streamlit as st
-import cv2
 import av
 import threading
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
@@ -19,9 +18,32 @@ def cargar_modelo_yolo():
 
 modelo_yolo = cargar_modelo_yolo()
 
-# Estado global seguro para compartir los objetos detectados entre el hilo de video y la interfaz de Streamlit
-if "detectados" not in st.session_state:
-    st.session_state.detectados = set()
+# Diccionario de etiquetas específicas en español para utensilios de cocina
+NOMBRES_UTENSILIOS_ES = {
+    "bowl": "Tazón para mezclar",
+    "cup": "Taza medidora",
+    "knife": "Cuchillo de cocina",
+    "spoon": "Cuchara mezcladora",
+    "fork": "Tenedor de cocina",
+    "bottle": "Botella de aceite/líquidos",
+    "wine glass": "Recipiente/copa medidora",
+    "banana": "Ingrediente: Plátano",
+    "apple": "Ingrediente: Manzana",
+    "orange": "Ingrediente: Naranja",
+    "carrot": "Ingrediente: Zanahoria",
+    "broccoli": "Ingrediente: Brócoli",
+    "sandwich": "Preparación: Sándwich",
+    "pizza": "Preparación: Pizza",
+    "donut": "Preparación: Masa/Dona",
+    "cake": "Preparación: Pastel/Mezcla",
+    "cell phone": "Temporizador / Asistente móvil"
+}
+
+# Lock y conjunto compartido seguro entre hilos de video y UI
+lock_deteccion = threading.Lock()
+if "detectados_set" not in st.session_state:
+    st.session_state.detectados_set = set()
+DETECTADOS_COMPARTIDOS = st.session_state.detectados_set
 
 # Estilos CSS con estética de libro de cocina rústico
 st.markdown("""
@@ -67,16 +89,21 @@ st.markdown("""
 
 # Título principal estilo libro
 st.markdown("<h1 class='book-title'>📖 CookVoice: Recetario, Visión YOLO & IoT</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; font-style: italic;'>Asistente multimodal con detección interactiva en tiempo real y control físico.</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-style: italic;'>Detección rápida de utensilios con nombres específicos, voz manos libres y control físico.</p>", unsafe_allow_html=True)
 
-# Base de datos de recetas con sus ingredientes y herramientas/implementos físicos
+# Base de datos de recetas con utensilios específicos
 recetas = {
     "Pasta Alfredo Casera": {
         "tiempo": "20 minutos",
         "dificultad": "Fácil",
-        "ingredientes": ["Pasta Fettuccine", "Crema de leche", "Mantequilla", "Ajo", "Queso parmesano"],
-        "implementos": ["bowl", "knife", "spoon", "fork", "wine glass"], # Mapeado a clases que YOLOv8 detecta fácilmente (tazón, cuchillo, cuchara, tenedor, copa/vaso)
-        "implementos_nombres": ["Tazón hondo (Bowl)", "Cuchillo de cocina", "Cuchara mezcladora", "Tenedor", "Recipiente de crema"],
+        "ingredientes": ["200g de Pasta Fettuccine", "100ml de Crema de leche", "50g de Mantequilla", "2 dientes de Ajo", "Queso parmesano"],
+        "implementos": [
+            ("bowl", "Tazón hondo para pasta"),
+            ("knife", "Cuchillo para picar ajo"),
+            ("spoon", "Cuchara de madera para salsa"),
+            ("fork", "Tenedor para servir pasta"),
+            ("wine glass", "Copa/vaso medidor de crema")
+        ],
         "pasos": [
             "Paso 1: Pon a hervir una olla grande con agua y sal. Cuando hierva, añade la pasta y cocina por 10 minutos.",
             "Paso 2: En una sartén grande, derrama la mantequilla a fuego medio y sofríe los dos dientes de ajo picados hasta que doren.",
@@ -87,9 +114,14 @@ recetas = {
     "Ensalada César con Pollo": {
         "tiempo": "15 minutos",
         "dificultad": "Muy Fácil",
-        "ingredientes": ["Pechuga de pollo", "Lechuga romana", "Croutones", "Queso parmesano", "Aderezo César"],
-        "implementos": ["bowl", "knife", "fork", "spoon", "bottle"],
-        "implementos_nombres": ["Tazón grande de ensalada", "Cuchillo para picar", "Tenedor", "Cuchara de aderezo", "Botella de aceite/aderezo"],
+        "ingredientes": ["1 Pechuga de pollo", "Lechuga romana", "Croutones de pan", "Queso parmesano rallado", "Aderezo César"],
+        "implementos": [
+            ("bowl", "Ensaladera honda"),
+            ("knife", "Cuchillo de corte para pollo y lechuga"),
+            ("fork", "Tenedor de cocina"),
+            ("spoon", "Cuchara para aderezo"),
+            ("bottle", "Botella de aceite o aderezo")
+        ],
         "pasos": [
             "Paso 1: Cocina las tiras de pechuga de pollo en una sartén con un chorrito de aceite, sal y pimienta hasta que estén doradas.",
             "Paso 2: En un bol grande, coloca la lechuga romana limpia y picada como base principal.",
@@ -100,9 +132,14 @@ recetas = {
     "Waffles Caseros Esponjosos": {
         "tiempo": "25 minutos",
         "dificultad": "Media",
-        "ingredientes": ["Harina de trigo", "Huevos", "Leche", "Mantequilla", "Polvo de hornear"],
-        "implementos": ["bowl", "spoon", "cup", "fork", "bottle"],
-        "implementos_nombres": ["Tazón mezclador", "Cuchara medidora", "Taza para leche", "Tenedor para batir", "Botella de leche/mantequilla"],
+        "ingredientes": ["2 tazas de Harina de trigo", "2 Huevos", "1 y 1/2 tazas de Leche", "1/2 taza de Mantequilla", "Polvo para hornear"],
+        "implementos": [
+            ("bowl", "Tazón batidor de mezcla"),
+            ("cup", "Taza medidora de ingredientes"),
+            ("spoon", "Cuchara medidora de polvo hornear"),
+            ("fork", "Tenedor batidor de huevos"),
+            ("bottle", "Botella de leche o esencia")
+        ],
         "pasos": [
             "Paso 1: En un recipiente hondo, mezcla la harina de trigo junto con el polvo para hornear.",
             "Paso 2: En otro tazón, bate los huevos, añade la leche y la mantequilla derretida.",
@@ -117,12 +154,13 @@ st.markdown("### 🔍 Índice de Recetas (Catálogo ChatPDF)")
 receta_seleccionada = st.selectbox("Elige una receta del catálogo:", list(recetas.keys()))
 receta_info = recetas[receta_seleccionada]
 
-# Limpiar objetos detectados al cambiar de receta
+# Reiniciar utensilios detectados al cambiar de receta
 if "receta_actual" not in st.session_state or st.session_state.receta_actual != receta_seleccionada:
     st.session_state.receta_actual = receta_seleccionada
-    st.session_state.detectados = set()
+    with lock_deteccion:
+        DETECTADOS_COMPARTIDOS.clear()
 
-# Mostrar tarjeta de la receta con implementos requeridos
+# Mostrar tarjeta de la receta
 st.markdown(f"""
 <div class='recipe-card'>
     <h2>{receta_seleccionada}</h2>
@@ -131,52 +169,90 @@ st.markdown(f"""
     <ul>
         {''.join([f"<li>{ing}</li>" for ing in receta_info['ingredientes']])}
     </ul>
-    <h4>🛠️ Herramientas / Implementos a detectar por la cámara:</h4>
+    <h4>🛠️ Utensilios específicos requeridos:</h4>
 </div>
 """, unsafe_allow_html=True)
 
-# LISTA INTERACTIVA DINÁMICA (Se tacha en tiempo real conforme YOLO detecta el objeto)
-cols_checklist = st.columns(len(receta_info['implementos']))
-for idx, imp_nombre in enumerate(receta_info['implementos_nombres']):
-    clase_yolo = receta_info['implementos'][idx]
-    with cols_checklist[idx]:
-        if clase_yolo in st.session_state.detectados:
-            st.markdown(f"<p class='tachado'>✅ {imp_nombre}</p>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<p style='color: #888;'>⏳ {imp_nombre}</p>", unsafe_allow_html=True)
+# Fragmento que actualiza la lista tachada rápidamente sin recargar toda la app
+@st.fragment(run_every=1.0)
+def mostrar_checklist_utensilios(implementos):
+    with lock_deteccion:
+        detectados_snapshot = set(DETECTADOS_COMPARTIDOS)
 
-# SECCIÓN DE VISIÓN ARTIFICIAL EN TIEMPO REAL CON YOLOv8
-st.markdown("### 👁️ Escáner de Implementos en Vivo (YOLOv8)")
-st.markdown("<div class='vision-panel'>Haz clic en <b>START</b> para encender la cámara. Al mostrar las herramientas frente al lente, el sistema las reconocerá y las tachará automáticamente en la lista de arriba.</div>", unsafe_allow_html=True)
+    cols = st.columns(len(implementos))
+    for idx, (clase_yolo, nombre_especifico) in enumerate(implementos):
+        with cols[idx]:
+            if clase_yolo in detectados_snapshot:
+                st.markdown(f"<p class='tachado'>✅ {nombre_especifico}</p>", unsafe_allow_html=True)
+            else:
+                st.markdown(f"<p style='color: #7A6A5E;'>⏳ {nombre_especifico}</p>", unsafe_allow_html=True)
+
+    col_btn, _ = st.columns([1, 2])
+    with col_btn:
+        if st.button("🔄 Reiniciar lista de utensilios"):
+            with lock_deteccion:
+                DETECTADOS_COMPARTIDOS.clear()
+            st.rerun(scope="fragment")
+
+mostrar_checklist_utensilios(receta_info["implementos"])
+
+# SECCIÓN DE VISIÓN ARTIFICIAL RÁPIDA EN TIEMPO REAL CON YOLOv8
+st.markdown("### 👁️ Escáner Rápido de Utensilios en Vivo (YOLOv8)")
+st.markdown("<div class='vision-panel'>Haz clic en <b>START</b> para activar la cámara. El modelo analiza en alta velocidad con resolución optimizada y etiqueta cada utensilio con su nombre específico.</div>", unsafe_allow_html=True)
 
 RTC_CONFIGURATION = RTCConfiguration(
     {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
 )
 
-class YOLOVideoProcessor(VideoProcessorBase):
+clases_objetivo_actual = {clase for clase, _ in receta_info["implementos"]}
+
+class FastYOLOVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.frame_idx = 0
+        self.ultimo_anotado = None
+
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        
-        # Inferencia con YOLOv8
-        resultados = modelo_yolo(img, conf=0.35, verbose=False)
-        
-        # Extraer nombres de las clases detectadas en este fotograma
-        for box in resultados[0].boxes:
-            cls_id = int(box.cls[0])
-            nombre_clase = modelo_yolo.names[cls_id]
-            
-            # Si el objeto detectado coincide con los implementos de la receta actual, registrarlo
-            if nombre_clase in receta_info['implementos']:
-                st.session_state.detectados.add(nombre_clase)
+        self.frame_idx += 1
 
-        img_anotada = resultados[0].plot()
-        return av.VideoFrame.from_ndarray(img_anotada, format="bgr24")
+        # Procesar 1 de cada 2 fotogramas con imgsz=320 para máxima fluidez en la nube
+        if self.frame_idx % 2 == 1 or self.ultimo_anotado is None:
+            resultados = modelo_yolo(img, imgsz=320, conf=0.28, iou=0.45, verbose=False)
+            resultado = resultados[0]
+
+            # Reemplazar nombres genéricos por nombres específicos de cocina en las etiquetas
+            nombres_personalizados = {}
+            detectados_en_frame = set()
+
+            for cls_id, nombre_orig in modelo_yolo.names.items():
+                nombres_personalizados[cls_id] = NOMBRES_UTENSILIOS_ES.get(
+                    nombre_orig, f"Utensilio: {nombre_orig.capitalize()}"
+                )
+
+            if resultado.boxes is not None:
+                for box in resultado.boxes:
+                    cls_id = int(box.cls[0])
+                    nombre_orig = modelo_yolo.names[cls_id]
+                    if nombre_orig in clases_objetivo_actual:
+                        detectados_en_frame.add(nombre_orig)
+
+            if detectados_en_frame:
+                with lock_deteccion:
+                    DETECTADOS_COMPARTIDOS.update(detectados_en_frame)
+
+            resultado.names = nombres_personalizados
+            self.ultimo_anotado = resultado.plot(line_width=2, font_size=1.0)
+
+        return av.VideoFrame.from_ndarray(self.ultimo_anotado, format="bgr24")
 
 webrtc_streamer(
-    key="yolo-cocina-live",
-    video_processor_factory=YOLOVideoProcessor,
+    key="yolo-cocina-fast",
+    video_processor_factory=FastYOLOVideoProcessor,
     rtc_configuration=RTC_CONFIGURATION,
-    media_stream_constraints={"video": True, "audio": False},
+    media_stream_constraints={
+        "video": {"width": {"ideal": 640}, "height": {"ideal": 480}},
+        "audio": False,
+    },
     async_processing=True,
 )
 
